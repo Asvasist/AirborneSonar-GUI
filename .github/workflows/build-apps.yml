@@ -1,0 +1,62 @@
+name: Build apps
+
+# Builds the double-click applications for Windows and macOS.
+# Run it from the Actions tab (Run workflow) or by pushing a tag such as v1.0.
+# This file assumes the GUIAPP folder contents are the repository root.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - name: Receiver-mode and portability tests
+        run: python -m unittest tests.test_mode_platform -v
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+          - os: macos-latest # Apple Silicon (M1 and newer)
+            label: macOS-AppleSilicon
+          - os: macos-15-intel # Intel Macs; delete this entry if the runner is unavailable
+            label: macOS-Intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt pyinstaller
+      - name: Build the application
+        shell: bash
+        run: pyinstaller --noconfirm --windowed --name "Airborne Sonar" --paths host host/sonar_gui.py
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "dist/Airborne Sonar" -DestinationPath "AirborneSonar-${{ matrix.label }}.zip"
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: hdiutil create -volname "Airborne Sonar" -srcfolder "dist/Airborne Sonar.app" -ov -format UDZO "AirborneSonar-${{ matrix.label }}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AirborneSonar-${{ matrix.label }}
+          path: |
+            AirborneSonar-${{ matrix.label }}.zip
+            AirborneSonar-${{ matrix.label }}.dmg
+          if-no-files-found: error
