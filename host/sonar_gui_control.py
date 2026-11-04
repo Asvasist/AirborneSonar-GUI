@@ -7,6 +7,9 @@ STATUS = re.compile(r"SONAR (IDLE|WAIT_BUFFER|ACQUIRE|PRE_MOVE|MOVING|SETTLING|S
 IDLE_STATES = {"IDLE", "STOPPED"}
 RX_MODE = re.compile(r"rx_mode=(STANDARD|ULTRASONIC) pdm_hz=(\d+)")
 AUDIO_STATUS = re.compile(r"config=(\d+) mode=(GENERATE|WAV) tx_us=(\d+) amplitude=(\d+) waveform=(\d+) audio_ready=(\d+)")
+SWEEP = re.compile(r"sweep_deg=(\d+)")  # Absent in firmware without the sweep option.
+FULL_TURN = 360
+SETUP_PHASES = {"sweep_prompt", "sweep_value", "prompt", "value"}
 
 
 def parse_steps(text, reverse=False):
@@ -21,6 +24,19 @@ def parse_steps(text, reverse=False):
     return -int(value) if reverse else int(value)
 
 
+def parse_sweep(text):
+    """Sweep angle in whole degrees: 360 = one turn, less = partial sweep."""
+    value = str(text).strip()
+    if not re.fullmatch(r"[0-9]{1,3}", value) or not 1 <= int(value) <= FULL_TURN:
+        raise ValueError("Enter a whole sweep angle from 1 to 360 degrees.")
+    return int(value)
+
+
+def recordings(steps, sweep):
+    """360 degrees: one recording per step. Less: both ends are recorded."""
+    return abs(steps) if sweep == FULL_TURN else abs(steps) + 1
+
+
 class ExperimentControl:
     def __init__(self, send, notify, now=time.monotonic, before_run=None):
         self.send, self.notify, self.now = send, notify, now
@@ -31,6 +47,8 @@ class ExperimentControl:
         self.phase = "idle"
         self.steps = self.divisor = self.cycle = self.ddr = self.capacity = 0
         self.requested = 0
+        self.sweep = FULL_TURN
+        self.board_sweep = None  # Reported by the status line; None for older firmware.
         self.stored = False
         self.deadline = 0.0
         self.last_status = 0.0
@@ -70,6 +88,7 @@ class ExperimentControl:
         self.audio_configuration(None)
         self.reported_audio = None
         self.rx_mode = None
+        self.board_sweep = None
         self.console_up = up
         self.board_state = "UNKNOWN"
         self.phase = "idle"
@@ -88,21 +107,35 @@ class ExperimentControl:
         self.ethernet_up = up
         if not up:
             self.audio_configuration(None)
-        if not up and self.phase in {"prompt", "value", "starting"}:
+        if not up and self.phase in SETUP_PHASES | {"starting"}:
             self.error = "Start cancelled because Ethernet disconnected."
             self.stop()
 
-    def start(self, text, reverse=False):
+    def start(self, text, reverse=False, sweep=FULL_TURN):
         steps = parse_steps(text, reverse)
+        sweep = parse_sweep(sweep)
         if not self.can_start:
             raise ValueError("Apply audio settings and wait for matching idle-board/Ethernet confirmations and an empty DDR queue before starting.")
+        if sweep != FULL_TURN and self.board_sweep is None:
+            raise ValueError("This board firmware only scans 360 degrees. Load the Vitis firmware with the sweep option.")
         self.error = ""
         self.requested = steps
+        self.sweep = sweep
         self.stored = False
+        self.deadline = self.now() + 10.0
+        # The board keeps its sweep between tests; send it only when it differs.
+        if self.board_sweep is not None and self.board_sweep != sweep:
+            self.phase = "sweep_prompt"
+            self.send(b"g")
+            self.notify(f"Setting the sweep angle to {sweep} degrees; waiting for the board's prompt.")
+        else:
+            self.ask_positions()
+
+    def ask_positions(self):
         self.phase = "prompt"
         self.deadline = self.now() + 10.0
         self.send(b"n")
-        self.notify("Setting positions per 360 degrees; waiting for the board's prompt.")
+        self.notify("Setting the number of steps; waiting for the board's prompt.")
 
     def stop(self):
         if not self.console_up:
@@ -131,6 +164,17 @@ class ExperimentControl:
             self.phase = "idle"
             self.error = line
             return
+        if self.phase == "sweep_prompt" and "Enter sweep angle in whole degrees (1..360), then Enter:" in line:
+            if not self.ethernet_up:
+                self.stop()
+                return
+            self.send(f"{self.sweep}\r".encode("ascii"))
+            self.phase = "sweep_value"
+            self.deadline = self.now() + 10.0
+            return
+        if self.phase == "sweep_value" and "Sweep stored:" in line:
+            self.ask_positions()
+            return
         if self.phase == "prompt" and "Enter signed positions per 360 degrees (1..1000), then Enter:" in line:
             if not self.ethernet_up:
                 self.stop()
@@ -140,7 +184,7 @@ class ExperimentControl:
             self.deadline = self.now() + 10.0
         if self.phase == "value" and "Positions-per-revolution stored" in line:
             self.stored = True
-        if self.phase in {"prompt", "value", "starting"} and (
+        if self.phase in SETUP_PHASES | {"starting"} and (
                 "Invalid or rejected value" in line or "Cannot start:" in line):
             self.error = line
             self.stop()
@@ -155,6 +199,8 @@ class ExperimentControl:
         mode = RX_MODE.search(line)
         if mode:
             self.rx_mode = mode.group(1)
+        sweep = SWEEP.search(line)
+        self.board_sweep = int(sweep.group(1)) if sweep else None
         self.reported_audio = None
         if audio:
             config, mode, duration, amplitude, waveform, ready = audio.groups()
@@ -172,7 +218,8 @@ class ExperimentControl:
             self.error = "Board fault. Read the activity log; reset in Vitis only after saving queued captures."
         elif self.phase == "value" and self.stored:
             if (state not in IDLE_STATES or self.steps != self.requested or not self.ethernet_up
-                    or receiver != "1" or not self.audio_matches or self.ddr != 0):
+                    or receiver != "1" or not self.audio_matches or self.ddr != 0
+                    or (self.board_sweep or FULL_TURN) != self.sweep):
                 self.error = "Board positions/audio/receiver confirmation did not match; start cancelled."
                 self.stop()
             else:
@@ -189,14 +236,18 @@ class ExperimentControl:
                 self.notify("Scan positions confirmed and receiver connected. Start sent.")
         elif self.phase == "starting" and state not in IDLE_STATES:
             self.phase = "idle"
-            self.notify("360-degree scan running. The board stops automatically after one revolution.")
+            if self.sweep == FULL_TURN:
+                self.notify("360-degree scan running. The board stops automatically after one revolution.")
+            else:
+                self.notify(f"{self.sweep}-degree sweep running ({recordings(self.requested, self.sweep)} recordings). "
+                            "The board stops automatically at the end angle.")
         elif self.phase == "stopping" and state == "STOPPED":
             self.phase = "idle"
             self.notify("Board stopped. Waiting for queued recordings to transfer." if self.ddr else "Board stopped; DDR is empty.")
 
     def tick(self):
         now = self.now()
-        if self.console_up and self.phase not in {"prompt", "value"} and now - self.last_query >= 1.0:
+        if self.console_up and self.phase not in SETUP_PHASES and now - self.last_query >= 1.0:
             self.send(b"s")
             self.last_query = now
         if self.phase != "idle" and now >= self.deadline:

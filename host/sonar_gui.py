@@ -13,7 +13,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from sonar_gui_control import ExperimentControl, parse_steps
+from sonar_gui_control import ExperimentControl, FULL_TURN, parse_steps, parse_sweep, recordings
 from sonar_gui_transport import EthernetWorker
 from sonar_console_transport import ConsoleWorker
 from sonar_gui_audio import ConfigurationWorker, audio_request
@@ -52,6 +52,7 @@ class SonarApp:
         self.rx_mode = tk.StringVar(value="STANDARD")
         self.mode_text = tk.StringVar(value="Connect to read the board's receiver mode.")
         self.steps = tk.StringVar(value="30")
+        self.sweep = tk.StringVar(value=str(FULL_TURN))
         self.reverse = tk.BooleanVar()
         self.tx_mode = tk.StringVar(value="GENERATE")
         self.tx_start_hz = tk.StringVar(value="2500")
@@ -101,7 +102,11 @@ class SonarApp:
         panel = ttk.Frame(canvas, padding=16)
         page = canvas.create_window((0, 0), window=panel, anchor="nw")
         panel.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(page, width=e.width))
+        def fit(event):
+            canvas.itemconfigure(page, width=event.width,
+                                 height=max(event.height, panel.winfo_reqheight()))
+
+        canvas.bind("<Configure>", fit)
 
         def wheel(event):
             if str(event.widget).startswith(str(self.activity)):
@@ -191,19 +196,26 @@ class SonarApp:
         ttk.Label(actions, textvariable=self.audio_text, wraplength=650).grid(row=0, column=2, sticky="w")
         run = ttk.LabelFrame(panel, text="Experiment", padding=12)
         run.grid(row=5, column=0, sticky="ew", pady=10)
-        ttk.Label(run, text="Positions per 360°").grid(row=0, column=0, sticky="w")
-        self.steps_entry = ttk.Entry(run, textvariable=self.steps, width=10, font=(FONT, 13))
-        self.steps_entry.grid(row=0, column=1, padx=12)
+        ttk.Label(run, text="Sweep angle (°)").grid(row=0, column=0, sticky="w")
+        self.sweep_entry = ttk.Entry(run, textvariable=self.sweep, width=6, font=(FONT, 13))
+        self.sweep_entry.grid(row=0, column=1, padx=(8, 16))
+        ttk.Label(run, text="Steps").grid(row=0, column=2, sticky="w")
+        self.steps_entry = ttk.Entry(run, textvariable=self.steps, width=8, font=(FONT, 13))
+        self.steps_entry.grid(row=0, column=3, padx=8)
         self.reverse_box = ttk.Checkbutton(run, text="Reverse direction", variable=self.reverse)
-        self.reverse_box.grid(row=0, column=2, padx=8)
+        self.reverse_box.grid(row=0, column=4, padx=8)
         self.start_button = ttk.Button(run, text="Start experiment", style="Start.TButton", command=self.start)
-        self.start_button.grid(row=0, column=3, padx=8)
+        self.start_button.grid(row=0, column=5, padx=8)
         self.stop_button = ttk.Button(run, text="Stop", style="Stop.TButton", command=self.stop)
-        self.stop_button.grid(row=0, column=4)
+        self.stop_button.grid(row=0, column=6)
         self.disconnect_button = ttk.Button(run, text="Disconnect", command=self.request_disconnect)
-        self.disconnect_button.grid(row=0, column=5, padx=(8, 0))
-        ttk.Label(run, text="Choose 1 to 1000 positions. One run always turns exactly 360°.").grid(
-            row=1, column=0, columnspan=6, sticky="w", pady=(10, 0))
+        self.disconnect_button.grid(row=0, column=7, padx=(8, 0))
+        self.run_hint = tk.StringVar()
+        ttk.Label(run, textvariable=self.run_hint, wraplength=900).grid(
+            row=1, column=0, columnspan=8, sticky="w", pady=(10, 0))
+        for variable in (self.sweep, self.steps):
+            variable.trace_add("write", lambda *_: self.update_run_hint())
+        self.update_run_hint()
         status = ttk.Frame(panel)
         status.grid(row=6, column=0, sticky="ew")
         for variable in (self.connection_text, self.state_text, self.capture_text, self.detail_text):
@@ -456,12 +468,13 @@ class SonarApp:
     def start(self):
         try:
             parse_steps(self.steps.get(), self.reverse.get())
+            parse_sweep(self.sweep.get())
             if not self.control.can_start:
                 raise ValueError("Apply audio settings and wait for the board's confirmation before Start.")
             if self.control.rx_mode and self.rx_mode.get() != self.control.rx_mode:
                 raise ValueError(f"The board is in {self.control.rx_mode.title()} mode but "
                                  f"{self.rx_mode.get().title()} is selected. Click Switch mode first.")
-            self.pending_start = (self.steps.get(), self.reverse.get())
+            self.pending_start = (self.steps.get(), self.reverse.get(), self.sweep.get())
             self.audio_text.set("Verifying the applied configuration before starting...")
             self.audio_job("verify", expected=dict(self.control.applied_audio))
         except (ValueError, OSError) as error:
@@ -475,11 +488,25 @@ class SonarApp:
         config_id = self.control.applied_audio["config_id"]
         folder = self.ethernet_worker.begin_test(first_sequence, positions,
                                                self.endpoint["folder"], config_id,
-                                               boot_id=self.pending_identity[0], test_id=self.pending_identity[1])
+                                               boot_id=self.pending_identity[0], test_id=self.pending_identity[1],
+                                               sweep_deg=self.control.sweep)
         self.session_folder = Path(folder)
         self.deliveries = self.saved_bytes = 0
         self.detail_text.set("Waiting for the first completed recording of this test.")
         self.log(f"New test destination: {folder}. Created when the first recording arrives.")
+
+    def update_run_hint(self):
+        try:
+            sweep, steps = parse_sweep(self.sweep.get()), parse_steps(self.steps.get())
+        except ValueError:
+            self.run_hint.set("Sweep 1 to 360 degrees in 1 to 1000 steps.")
+            return
+        if sweep == FULL_TURN:
+            self.run_hint.set(f"360°: {steps} recordings, {360 / steps:g}° apart. The last step returns to the start, "
+                              "which is not recorded twice.")
+        else:
+            self.run_hint.set(f"{sweep}°: {steps} steps of {sweep / steps:g}° and {recordings(steps, sweep)} recordings "
+                              "including both ends. The motor stays at the end angle.")
 
     def stop(self):
         try:
@@ -650,7 +677,7 @@ class SonarApp:
         self.start_button.configure(state="normal" if c.can_start and not busy and not audio_busy else "disabled")
         self.stop_button.configure(state="normal" if c.console_up and not self.disconnecting else "disabled")
         self.disconnect_button.configure(state="normal" if attached and not busy else "disabled")
-        for widget in (self.steps_entry, self.reverse_box):
+        for widget in (self.steps_entry, self.sweep_entry, self.reverse_box):
             widget.configure(state="normal" if (not attached or c.can_configure) and not busy and not audio_busy else "disabled")
         editable = (not attached or c.can_configure) and not busy and not audio_busy
         if c.rx_mode and c.rx_mode != self.shown_mode:  # Board reported a (new) mode: follow it.
@@ -676,7 +703,7 @@ class SonarApp:
         self.audio_check.configure(state="normal" if self.endpoint and c.ethernet_up and not busy and not audio_busy else "disabled")
         self.connection_text.set(f"Ethernet console: {'connected' if c.console_up else 'connecting / disconnected'}    |    Recordings: {'connected' if c.ethernet_up else 'connecting / disconnected'}")
         stale = c.console_up and time.monotonic() - c.last_status >= 4
-        self.state_text.set(f"Board: {c.board_state}{' (status stale)' if stale else ''}    |    Cycle {c.cycle}    |    DDR {c.ddr}/{c.capacity}    |    Positions/rev {abs(c.steps)}, direction {'reverse' if c.steps < 0 else 'forward'}, divisor {c.divisor}")
+        self.state_text.set(f"Board: {c.board_state}{' (status stale)' if stale else ''}    |    Cycle {c.cycle}    |    DDR {c.ddr}/{c.capacity}    |    Sweep {c.board_sweep or FULL_TURN}°, steps {abs(c.steps)}, direction {'reverse' if c.steps < 0 else 'forward'}, divisor {c.divisor}")
         self.capture_text.set(f"{self.deliveries} file deliveries saved  |  {self.saved_bytes:,} bytes  |  Reconnect retries can redeliver a capture.")
         if busy:
             hint = "Stopping and saving queued captures..." if self.exit_pending else "Closing connections; discovery may take a few seconds..."
@@ -695,7 +722,7 @@ class SonarApp:
         elif c.board_state == "WAIT_BUFFER":
             hint = "Board waiting for a free DDR buffer; it resumes automatically when recordings are transferred."
         elif c.board_state in {"ACQUIRE", "PRE_MOVE", "MOVING", "SETTLING"}:
-            hint = "One 360° scan is running and will stop automatically after the selected number of positions. Stop can end it early."
+            hint = "A scan is running and stops automatically after the selected number of steps. Stop can end it early."
         else:
             hint = "Run in Vitis and connect Ethernet. Start becomes available after both connections and audio settings are confirmed."
         self.guidance.set(hint)
