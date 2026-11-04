@@ -56,7 +56,7 @@ class TestCaptureStore:
         with self.lock:
             self.connection = dict(info)
 
-    def begin_test(self, first_sequence, positions, configuration_folder, config_id, *, boot_id, test_id):
+    def begin_test(self, first_sequence, positions, configuration_folder, config_id, *, boot_id, test_id, sweep_deg=360):
         key = (identity(boot_id), identity(test_id))
         if first_sequence < 1 or positions == 0:
             raise ValueError('Invalid test sequence or capture count.')
@@ -81,7 +81,7 @@ class TestCaptureStore:
             if key in self.runs:
                 raise ValueError('Test identity already exists; prepare a fresh test before Start.')
             folder = self.output / (datetime.now().strftime('test_%Y%m%d_%H%M%S_%f') + '_' + uuid.uuid4().hex[:8])
-            self.runs[key] = dict(folder=folder, bundle=bundle, store=None, notified=False, metadata=dict(boot_id=boot_id, test_id=test_id, start_requested_utc=utc_now(), first_sequence=first_sequence, requested_positions=positions, config_id=config_id, status='recording', board=self.connection))
+            self.runs[key] = dict(folder=folder, bundle=bundle, store=None, notified=False, metadata=dict(boot_id=boot_id, test_id=test_id, start_requested_utc=utc_now(), first_sequence=first_sequence, requested_positions=positions, sweep_deg=sweep_deg, expected_recordings=abs(positions) if sweep_deg == 360 else abs(positions) + 1, config_id=config_id, status='recording', board=self.connection))
             try:
                 self._persist_index()
             except OSError:
@@ -103,7 +103,7 @@ class TestCaptureStore:
             if run['metadata']['status'] != 'recording':
                 return
             count = len(list(run['folder'].glob('second_*/capture_*.json')))
-            run['metadata'].update(finished_utc=utc_now(), last_sequence=last_sequence, saved_captures=count, status='stopped' if run['metadata'].get('stop_requested') or count < abs(run['metadata']['requested_positions']) else 'complete')
+            run['metadata'].update(finished_utc=utc_now(), last_sequence=last_sequence, saved_captures=count, status='stopped' if run['metadata'].get('stop_requested') or count < run['metadata'].get('expected_recordings', abs(run['metadata']['requested_positions'])) else 'complete')
             self._persist_index()
             if run['store'] is not None:
                 write_json(run['folder'] / 'test.json', run['metadata'])

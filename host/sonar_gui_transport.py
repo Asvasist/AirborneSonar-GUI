@@ -20,9 +20,9 @@ class EthernetWorker(threading.Thread):
         self.tests = TestCaptureStore(args.output, emit)
         self.configuration_cache = None
 
-    def begin_test(self, first_sequence, positions, configuration_folder, config_id, *, boot_id, test_id):
+    def begin_test(self, first_sequence, positions, configuration_folder, config_id, *, boot_id, test_id, sweep_deg=360):
         return self.tests.begin_test(first_sequence, positions, configuration_folder, config_id,
-                                     boot_id=boot_id, test_id=test_id)
+                                     boot_id=boot_id, test_id=test_id, sweep_deg=sweep_deg)
 
     def request_test_stop(self):
         self.tests.request_stop()

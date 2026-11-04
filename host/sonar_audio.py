@@ -12,6 +12,21 @@ def is_wav(payload, meta):
         payload[:4] == b"RIFF" and payload[8:12] == b"WAVE")
 
 
+def wav_chunk(payload, chunk_id):
+    """Return the body of the first RIFF chunk named chunk_id, or None."""
+    if len(payload) < 12 or payload[:4] != b"RIFF" or payload[8:12] != b"WAVE":
+        return None
+    offset = 12
+    while offset + 8 <= len(payload):
+        name, size = payload[offset:offset + 4], struct.unpack_from("<I", payload, offset + 4)[0]
+        if offset + 8 + size > len(payload):
+            return None
+        if name == chunk_id:
+            return payload[offset + 8:offset + 8 + size]
+        offset += 8 + size + (size & 1)
+    return None
+
+
 def read_pcm_wav(payload, expected_channels=16):
     if (len(payload) < 12 or payload[:4] != b"RIFF" or
             payload[8:12] != b"WAVE" or

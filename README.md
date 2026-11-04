@@ -121,8 +121,16 @@ no longer offers it.
 3. Choose **Generate chirp** (start/stop frequency, duration, amplitude) or
    **Upload WAV**, then **Apply**. WAV files at other rates are resampled to
    96 kHz before upload.
-4. Enter the number of capture positions per revolution (1-1000) and **Start**.
-   The board performs one 360-degree scan and stops by itself. **Stop** aborts.
+4. Enter the **Sweep angle** (1-360°) and the number of **Steps** (1-1000), then
+   **Start**. The board stops by itself at the end. **Stop** aborts.
+   * 360°: one recording per step; the last step returns to the start.
+   * Less than 360°: N steps give N + 1 recordings, at both ends (90° in 8 steps
+     records at 0, 11.25, ..., 90°). The motor stays at the end angle.
+   * Sweep angles other than 360° need the Vitis firmware with the sweep option.
+
+Each capture's `.json` holds `board_metadata` from the board: scan index and
+requested angle, motor target/final position and angle, overflow retries and
+total overruns, receiver and transmit settings.
 
 Transmit is limited to 49 ms; each capture is 50 ms of 16-channel audio,
 decimated on the board to 96 kHz PCM16 in both receiver modes.

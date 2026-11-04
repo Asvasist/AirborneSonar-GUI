@@ -22,7 +22,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install -r requirements.txt
       - name: Receiver-mode and portability tests
-        run: python -m unittest tests.test_mode_platform -v
+        run: python -m unittest tests.test_mode_platform tests.test_sweep_metadata -v
 
   build:
     needs: test

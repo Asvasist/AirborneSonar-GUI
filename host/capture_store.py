@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-from sonar_audio import is_wav, read_pcm_wav
+from sonar_audio import is_wav, read_pcm_wav, wav_chunk
 
 
 def utc_now():
@@ -59,6 +59,12 @@ class CaptureStore:
             old = dict(meta, pc_received_utc=utc_now(), board_batch_release_us=self.batch_us)
             if pcm_info is not None:
                 old.update(pcm_info)
+                board = wav_chunk(payload, b"smta")
+                if board is not None:
+                    try:
+                        old["board_metadata"] = json.loads(board.decode("ascii"))
+                    except ValueError:
+                        old["board_metadata_status"] = "unreadable"  # Keep the audio anyway.
             config_id = meta.get("config_id", 0)
             old["configuration_status"] = "unavailable"
             if config_id:
