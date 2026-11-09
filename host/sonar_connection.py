@@ -202,6 +202,9 @@ def permission_help(error):
         return ("macOS blocked this connection (permission denied). Open System Settings > Privacy & Security > "
                 "Local Network, allow this app (or Terminal), then reconnect. Also check any VPN or firewall "
                 "that blocks local networks. No network or security settings were changed.")
+    if sys.platform.startswith("linux") and isinstance(error, PermissionError):
+        return ("Linux blocked this connection (permission denied). Check the firewall (ufw or firewalld) and any "
+                "VPN that blocks local networks, then reconnect. No network or security settings were changed.")
     if getattr(error, "winerror", None) == 10013 or isinstance(error, PermissionError):
         return ("Windows blocked this socket (10013 / permission denied). Check the VPN's local-network "
                 "access or kill-switch policy and the Python outbound firewall rule. Changing the board IP "

@@ -1,6 +1,6 @@
 name: Build apps
 
-# Builds the double-click applications for Windows and macOS.
+# Builds the ready-made applications for Windows, macOS and Linux.
 # Run it from the Actions tab (Run workflow) or by pushing a tag such as v1.0.
 # This file assumes the GUIAPP folder contents are the repository root.
 on:
@@ -13,16 +13,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest, macos-latest, ubuntu-22.04]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install Tk and a virtual display (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libtk8.6 xvfb
       - run: python -m pip install -r requirements.txt
       - name: Receiver-mode and portability tests
-        run: python -m unittest tests.test_mode_platform tests.test_sweep_metadata -v
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a' || '' }} python -m unittest tests.test_mode_platform tests.test_sweep_metadata -v
 
   build:
     needs: test
@@ -36,12 +39,17 @@ jobs:
             label: macOS-AppleSilicon
           - os: macos-15-intel # Intel Macs; delete this entry if the runner is unavailable
             label: macOS-Intel
+          - os: ubuntu-22.04 # Built on an older system so it also runs on newer ones (needs glibc 2.35+)
+            label: Linux
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install Tk and a virtual display (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libtk8.6 xvfb
       - run: python -m pip install -r requirements.txt pyinstaller
       - name: Build the application
         shell: bash
@@ -53,10 +61,20 @@ jobs:
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: hdiutil create -volname "Airborne Sonar" -srcfolder "dist/Airborne Sonar.app" -ov -format UDZO "AirborneSonar-${{ matrix.label }}.dmg"
+      - name: Start the app, then package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # timeout exits 124 only if the app was still running when it was stopped.
+          status=0
+          timeout 15 xvfb-run -a "dist/Airborne Sonar/Airborne Sonar" || status=$?
+          test "$status" -eq 124
+          # A tar keeps the executable permission, which the artifact zip would lose.
+          tar -czf "AirborneSonar-${{ matrix.label }}.tar.gz" -C dist "Airborne Sonar"
       - uses: actions/upload-artifact@v4
         with:
           name: AirborneSonar-${{ matrix.label }}
           path: |
             AirborneSonar-${{ matrix.label }}.zip
             AirborneSonar-${{ matrix.label }}.dmg
+            AirborneSonar-${{ matrix.label }}.tar.gz
           if-no-files-found: error

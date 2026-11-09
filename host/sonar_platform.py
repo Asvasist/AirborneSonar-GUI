@@ -36,3 +36,17 @@ def open_folder(folder):
                             capture_output=True, timeout=15, check=False)
     if result.returncode:
         raise OSError(f"Could not open {path}")
+
+
+def restore_system_libraries(environ=os.environ):
+    """The packaged Linux app points LD_LIBRARY_PATH at its own libraries; ip and xdg-open need the system's."""
+    if not getattr(sys, "frozen", False) or not sys.platform.startswith("linux"):
+        return
+    original = environ.pop("LD_LIBRARY_PATH_ORIG", None)
+    if original is None:
+        environ.pop("LD_LIBRARY_PATH", None)
+    else:
+        environ["LD_LIBRARY_PATH"] = original
+
+
+restore_system_libraries()
