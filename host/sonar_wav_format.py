@@ -124,3 +124,34 @@ def prepare_wav(data, sample_hz, *, max_samples=None):
     return result, {**info, "resampled": True, "source_sample_hz": source,
                     "resampler": "scipy.signal.resample_poly; Kaiser beta 8.6; zero padding",
                     "clipped_samples": clipped}
+
+
+# Copy of chirp_generator.v's quarter-wave table (PL source of truth; do not recompute).
+QUARTER_SINE = (
+    0, 804, 1608, 2410, 3212, 4011, 4808, 5602, 6393, 7179, 7962, 8739, 9512, 10278, 11039, 11793,
+    12539, 13279, 14010, 14732, 15446, 16151, 16846, 17530, 18204, 18868, 19519, 20159, 20787, 21403, 22005, 22594,
+    23170, 23731, 24279, 24811, 25329, 25832, 26319, 26790, 27245, 27683, 28105, 28510, 28898, 29268, 29621, 29956,
+    30273, 30571, 30852, 31113, 31356, 31580, 31785, 31971, 32137, 32285, 32412, 32521, 32609, 32678, 32728, 32757)
+
+
+def chirp_wav(start_hz, stop_hz, samples, amplitude_pct, sample_hz=96000):
+    """Bit-exact host model of the PL chirp: sonar_experiment_calculate() + chirp_generator.v."""
+    import io
+    import wave
+    inc = ((start_hz << 32) + sample_hz // 2) // sample_hz
+    stop = ((stop_hz << 32) + sample_hz // 2) // sample_hz
+    delta, den = stop - inc, samples - 1
+    step = (delta + den // 2) // den if delta >= 0 else -((-delta + den // 2) // den)
+    amplitude = (amplitude_pct * 32767 + 50) // 100
+    phase, out = 0, []
+    for _ in range(samples):
+        quadrant, index = phase >> 30, (phase >> 24) & 63
+        sine = QUARTER_SINE[63 - index if quadrant & 1 else index]
+        out.append(((-sine if quadrant & 2 else sine) * amplitude) >> 15)
+        phase = (phase + inc) & 0xFFFFFFFF
+        inc = (inc + step) & 0xFFFFFFFF
+    stream = io.BytesIO()
+    with wave.open(stream, "wb") as w:
+        w.setparams((1, 2, sample_hz, 0, "NONE", "not compressed"))
+        w.writeframes(struct.pack(f"<{samples}h", *out))
+    return stream.getvalue()

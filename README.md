@@ -1,6 +1,6 @@
 # Airborne Sonar desktop application
 
-Tkinter application for Windows and macOS that configures the transmit signal,
+Tkinter application for Windows, macOS and Linux that configures the transmit signal,
 selects the **receiver mode (Standard or Ultrasonic)**, runs one-revolution scans
 and stores every microphone capture the board sends. It talks to the firmware
 exclusively over Ethernet; no serial connection is needed.
@@ -14,7 +14,7 @@ exclusively over Ethernet; no serial connection is needed.
 
 ## 1. Install and run
 
-Pick **one** of the two ways. Both work on Windows and macOS.
+Pick **one** of the two ways. Both work on Windows, macOS and Linux.
 
 ### A. Ready-made application (no Python needed)
 
@@ -26,6 +26,17 @@ open it:
 | Windows | `AirborneSonar-Windows.zip` | Unzip, open the folder, double-click `Airborne Sonar.exe`. If SmartScreen warns, choose *More info > Run anyway*. |
 | Mac with Apple chip (M1 and newer) | `AirborneSonar-macOS-AppleSilicon.dmg` | Open the disk image and drag **Airborne Sonar** into *Applications*. |
 | Mac with Intel chip | `AirborneSonar-macOS-Intel.dmg` | Same as above. |
+| Linux, 64-bit Intel/AMD (Ubuntu 22.04, Debian 12 or newer) | `AirborneSonar-Linux.tar.gz` | See the commands below the table. |
+
+On Linux, open a terminal in the folder holding the download. Unzip the GitHub
+artifact first if it is still a `.zip`, then run:
+
+```bash
+tar -xzf AirborneSonar-Linux.tar.gz
+"./Airborne Sonar/Airborne Sonar"
+```
+
+Older or non-Intel Linux systems can use way B below.
 
 *Which Mac do I have?* Apple menu > **About This Mac**: "Chip: Apple M..." means
 Apple Silicon, "Processor: Intel" means Intel.
@@ -66,6 +77,13 @@ bash Start_Sonar_GUI.command
    also double-click `Start_Sonar_GUI.command` (if macOS blocks it, right-click >
    Open once, or run `chmod +x Start_Sonar_GUI.command`).
 
+**Linux**
+
+1. Install Python 3.9 or newer with Tk and venv. On Debian or Ubuntu:
+   `sudo apt install python3 python3-venv python3-tk`.
+2. In a terminal inside this folder, run `bash Start_Sonar_GUI.command`. The first
+   start needs internet and takes a few minutes.
+
 Manual equivalent of what the launcher does (on Windows use
 `.venv\Scripts\python.exe`):
 
@@ -77,8 +95,8 @@ python3 -m venv .venv
 
 ## 2. Building the applications (GitHub Actions)
 
-Windows and macOS applications can only be built on their own operating system,
-so the repository contains a workflow that builds both on GitHub's machines.
+Each application can only be built on its own operating system, so the
+repository contains a workflow that builds all of them on GitHub's machines.
 
 1. Create a new GitHub repository and upload the **contents** of this folder to
    its root (`.github/workflows/build-apps.yml` must end up at the repository
@@ -86,10 +104,10 @@ so the repository contains a workflow that builds both on GitHub's machines.
 2. Open the **Actions** tab > **Build apps** > **Run workflow**.
 3. When it finishes (about 10 minutes), open the run and download the artifacts:
    `AirborneSonar-Windows`, `AirborneSonar-macOS-AppleSilicon`,
-   `AirborneSonar-macOS-Intel`.
+   `AirborneSonar-macOS-Intel`, `AirborneSonar-Linux`.
 
-The workflow first runs the receiver-mode and portability tests on Windows and
-macOS, then builds the applications with PyInstaller. The Intel macOS entry uses
+The workflow first runs the receiver-mode and portability tests on Windows,
+macOS and Linux, then builds the applications with PyInstaller. The Intel macOS entry uses
 the `macos-15-intel` runner label; delete that entry from the workflow if GitHub
 no longer offers it.
 
@@ -111,6 +129,18 @@ no longer offers it.
    click *Allow*. If it was refused: *System Settings > Privacy & Security >
    Local Network*, enable *Airborne Sonar* (or *Terminal* when started from
    source). Turn off VPNs that block local networks.
+5. **Linux:** a wired connection left on DHCP usually gets no address on a direct
+   cable, so set it to link-local once (use the name `nmcli connection show` lists):
+
+   ```bash
+   sudo nmcli connection modify "Wired connection 1" ipv4.method link-local
+   sudo nmcli connection up "Wired connection 1"
+   ```
+
+   Without NetworkManager, use `sudo ip addr add 169.254.10.20/16 dev eth0` with
+   your interface name; this lasts until the next reboot. The GUI then finds the
+   interface by itself. If a firewall drops the board's discovery reply (UDP
+   5002), the GUI falls back to the board's default address `169.254.59.46`.
 
 ## 4. Using the application
 

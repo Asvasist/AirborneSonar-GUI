@@ -92,6 +92,22 @@ class PortabilityTests(unittest.TestCase):
         with patch.object(net.sys, "platform", "darwin"):
             self.assertIn("Local Network", net.permission_help(PermissionError("x")))
 
+    def test_linux_permission_help_does_not_blame_windows(self):
+        with patch.object(net.sys, "platform", "linux"):
+            text = net.permission_help(PermissionError("x"))
+        self.assertIn("Linux", text)
+        self.assertNotIn("Windows", text)
+
+    def test_packaged_linux_app_gives_child_programs_the_system_libraries(self):
+        with patch.object(sonar_platform.sys, "platform", "linux"), \
+                patch.object(sonar_platform.sys, "frozen", True, create=True):
+            no_original = {"LD_LIBRARY_PATH": "/bundle"}
+            sonar_platform.restore_system_libraries(no_original)
+            self.assertEqual(no_original, {})
+            user_set = {"LD_LIBRARY_PATH": "/bundle", "LD_LIBRARY_PATH_ORIG": "/opt/lib"}
+            sonar_platform.restore_system_libraries(user_set)
+            self.assertEqual(user_set, {"LD_LIBRARY_PATH": "/opt/lib"})
+
     def test_platform_defaults(self):
         with patch.object(sonar_platform.os, "name", "posix"):
             self.assertEqual(sonar_platform.default_adapter(), "auto")

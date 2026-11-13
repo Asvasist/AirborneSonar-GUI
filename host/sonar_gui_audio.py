@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from capture_store import utc_now, write_atomic, write_json
 from sonar_configure import BoardError, ControlClient, MAX_FILE_BYTES, crc32
-from sonar_wav_format import inspect_wav, prepare_wav
+from sonar_wav_format import chirp_wav, inspect_wav, prepare_wav
 from sonar_sample_rates import TX_SAMPLE_HZ
 from sonar_connection import connect_board
 
@@ -162,6 +162,7 @@ class ConfigurationWorker(threading.Thread):
                     if self.request["mode"] == "GENERATE":
                         reply = client.generate(self.request["start_hz"], self.request["stop_hz"],
                                                 self.request["duration_us"], self.request["amplitude_pct"])
+                        data = chirp_wav(reply["start_hz"], reply["stop_hz"], reply["tx_samples"], reply["amplitude_pct"])
                     else:
                         reply = client.upload_wav(data, self.request["amplitude_pct"], progress=self.progress)
                 else:
